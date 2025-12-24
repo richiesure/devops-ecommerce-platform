@@ -10,6 +10,7 @@ pipeline {
     }
 
     stages {
+<<<<<<< HEAD
 
         stage('Checkout') {
             steps {
@@ -17,6 +18,8 @@ pipeline {
                 git branch: 'main',
                     url: "${GITHUB_REPO}",
                     credentialsId: 'gits-cred'
+=======
+>>>>>>> b0335a3 (Fix Jenkinsfiles: correct GitHub URL, remove duplicate checkout, fix workspace cleanup)
             }
         }
 
