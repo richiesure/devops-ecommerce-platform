@@ -6,7 +6,7 @@ pipeline {
         SERVICE_PORT = '8080'
         APP_SERVER_1 = '10.0.11.51'
         APP_SERVER_2 = '10.0.12.197'
-        GITHUB_REPO = 'https://github.com/YOUR_USERNAME/devops-ecommerce-platform.git'
+        GITHUB_REPO = 'https://github.com/richiesure/devops-ecommerce-platform.git'
     }
     
     stages {
