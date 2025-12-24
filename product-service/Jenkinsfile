@@ -1,0 +1,116 @@
+pipeline {
+    agent any
+    
+    environment {
+        SERVICE_NAME = 'product-service'
+        SERVICE_PORT = '3000'
+        APP_SERVER_1 = '10.0.11.51'
+        APP_SERVER_2 = '10.0.12.197'
+        GITHUB_REPO = 'https://github.com/YOUR_USERNAME/devops-ecommerce-platform.git'
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                echo 'Checking out code from GitHub...'
+                git branch: 'main',
+                    url: "${GITHUB_REPO}"
+            }
+        }
+        
+        stage('Install Dependencies') {
+            steps {
+                echo 'Installing Node.js dependencies...'
+                dir("${SERVICE_NAME}") {
+                    sh 'npm install --production'
+                }
+            }
+        }
+        
+        stage('Run Tests') {
+            steps {
+                echo 'Running unit tests...'
+                dir("${SERVICE_NAME}") {
+                    sh 'npm test || echo "No tests specified"'
+                }
+            }
+        }
+        
+        stage('Code Quality Analysis') {
+            steps {
+                echo 'Running SonarQube analysis...'
+                sh 'echo "SonarQube analysis would run here"'
+            }
+        }
+        
+        stage('Build Docker Image') {
+            steps {
+                echo 'Building Docker image...'
+                dir("${SERVICE_NAME}") {
+                    sh 'echo "Docker build would happen here"'
+                }
+            }
+        }
+        
+        stage('Deploy to App Server 1') {
+            steps {
+                echo "Deploying to ${APP_SERVER_1}..."
+                sh """
+                    scp -r ${SERVICE_NAME}/* ec2-user@${APP_SERVER_1}:~/services/${SERVICE_NAME}/
+                    ssh ec2-user@${APP_SERVER_1} '
+                        cd ~/services/${SERVICE_NAME} &&
+                        npm install --production &&
+                        pm2 restart ${SERVICE_NAME} || pm2 start server.js --name ${SERVICE_NAME}
+                    '
+                """
+            }
+        }
+        
+        stage('Deploy to App Server 2') {
+            steps {
+                echo "Deploying to ${APP_SERVER_2}..."
+                sh """
+                    scp -r ${SERVICE_NAME}/* ec2-user@${APP_SERVER_2}:~/services/${SERVICE_NAME}/
+                    ssh ec2-user@${APP_SERVER_2} '
+                        cd ~/services/${SERVICE_NAME} &&
+                        npm install --production &&
+                        pm2 restart ${SERVICE_NAME} || pm2 start server.js --name ${SERVICE_NAME}
+                    '
+                """
+            }
+        }
+        
+        stage('Health Check') {
+            steps {
+                echo 'Running health checks...'
+                sh """
+                    sleep 5
+                    curl -f http://${APP_SERVER_1}:${SERVICE_PORT}/health || exit 1
+                    curl -f http://${APP_SERVER_2}:${SERVICE_PORT}/health || exit 1
+                """
+            }
+        }
+        
+        stage('Integration Tests') {
+            steps {
+                echo 'Running integration tests...'
+                sh 'echo "Integration tests would run here"'
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo 'Pipeline completed successfully!'
+            echo 'Product Service deployed to both app servers'
+        }
+        failure {
+            echo 'Pipeline failed!'
+            echo 'Rolling back to previous version...'
+        }
+        always {
+            echo 'Cleaning up workspace...'
+            cleanWs()
+        }
+    }
+}

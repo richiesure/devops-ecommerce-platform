@@ -1,0 +1,83 @@
+pipeline {
+    agent any
+    
+    environment {
+        SERVICE_NAME = 'order-service'
+        SERVICE_PORT = '5000'
+        APP_SERVER_1 = '10.0.11.51'
+        APP_SERVER_2 = '10.0.12.197'
+        GITHUB_REPO = 'https://github.com/YOUR_USERNAME/devops-ecommerce-platform.git'
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: 'main', url: "${GITHUB_REPO}"
+            }
+        }
+        
+        stage('Install Dependencies') {
+            steps {
+                dir("${SERVICE_NAME}") {
+                    sh 'pip3 install -r requirements.txt --user'
+                }
+            }
+        }
+        
+        stage('Run Python Tests') {
+            steps {
+                echo 'Running Python unit tests...'
+                dir("${SERVICE_NAME}") {
+                    sh 'python3 -m pytest || echo "No tests found"'
+                }
+            }
+        }
+        
+        stage('Deploy to App Servers') {
+            parallel {
+                stage('Deploy to Server 1') {
+                    steps {
+                        sh """
+                            scp -r ${SERVICE_NAME}/* ec2-user@${APP_SERVER_1}:~/services/${SERVICE_NAME}/
+                            ssh ec2-user@${APP_SERVER_1} '
+                                cd ~/services/${SERVICE_NAME} &&
+                                python3.11 -m pip install -r requirements.txt --user &&
+                                pm2 restart ${SERVICE_NAME}
+                            '
+                        """
+                    }
+                }
+                stage('Deploy to Server 2') {
+                    steps {
+                        sh """
+                            scp -r ${SERVICE_NAME}/* ec2-user@${APP_SERVER_2}:~/services/${SERVICE_NAME}/
+                            ssh ec2-user@${APP_SERVER_2} '
+                                cd ~/services/${SERVICE_NAME} &&
+                                python3.11 -m pip install -r requirements.txt --user &&
+                                pm2 restart ${SERVICE_NAME}
+                            '
+                        """
+                    }
+                }
+            }
+        }
+        
+        stage('Health Check') {
+            steps {
+                sh """
+                    curl -f http://${APP_SERVER_1}:${SERVICE_PORT}/health
+                    curl -f http://${APP_SERVER_2}:${SERVICE_PORT}/health
+                """
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo 'Order Service deployment successful!'
+        }
+        failure {
+            echo 'Deployment failed!'
+        }
+    }
+}

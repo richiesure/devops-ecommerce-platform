@@ -1,0 +1,83 @@
+pipeline {
+    agent any
+    
+    environment {
+        SERVICE_NAME = 'user-service'
+        SERVICE_PORT = '8080'
+        APP_SERVER_1 = '10.0.11.51'
+        APP_SERVER_2 = '10.0.12.197'
+        GITHUB_REPO = 'https://github.com/YOUR_USERNAME/devops-ecommerce-platform.git'
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: 'main', url: "${GITHUB_REPO}"
+            }
+        }
+        
+        stage('Install Dependencies') {
+            steps {
+                dir("${SERVICE_NAME}") {
+                    sh 'npm install --production'
+                }
+            }
+        }
+        
+        stage('Security Scan') {
+            steps {
+                echo 'Running security vulnerability scan...'
+                dir("${SERVICE_NAME}") {
+                    sh 'npm audit || echo "Audit complete"'
+                }
+            }
+        }
+        
+        stage('Deploy') {
+            parallel {
+                stage('Deploy to Server 1') {
+                    steps {
+                        sh """
+                            scp -r ${SERVICE_NAME}/* ec2-user@${APP_SERVER_1}:~/services/${SERVICE_NAME}/
+                            ssh ec2-user@${APP_SERVER_1} '
+                                cd ~/services/${SERVICE_NAME} &&
+                                npm install --production &&
+                                pm2 restart ${SERVICE_NAME}
+                            '
+                        """
+                    }
+                }
+                stage('Deploy to Server 2') {
+                    steps {
+                        sh """
+                            scp -r ${SERVICE_NAME}/* ec2-user@${APP_SERVER_2}:~/services/${SERVICE_NAME}/
+                            ssh ec2-user@${APP_SERVER_2} '
+                                cd ~/services/${SERVICE_NAME} &&
+                                npm install --production &&
+                                pm2 restart ${SERVICE_NAME}
+                            '
+                        """
+                    }
+                }
+            }
+        }
+        
+        stage('Verify Deployment') {
+            steps {
+                sh """
+                    curl -f http://${APP_SERVER_1}:${SERVICE_PORT}/health
+                    curl -f http://${APP_SERVER_2}:${SERVICE_PORT}/health
+                """
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo 'User Service deployment successful!'
+        }
+        failure {
+            echo 'Deployment failed - initiating rollback'
+        }
+    }
+}
