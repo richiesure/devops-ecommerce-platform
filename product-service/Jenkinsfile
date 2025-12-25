@@ -14,7 +14,8 @@ pipeline {
             steps {
                 echo 'Checking out code from GitHub...'
                 git branch: 'main',
-                    url: "${GITHUB_REPO}"
+                    url: "${GITHUB_REPO}",
+                    credentialsId: 'gits-cred'
             }
         }
         
@@ -22,7 +23,11 @@ pipeline {
             steps {
                 echo 'Installing Node.js dependencies...'
                 dir("${SERVICE_NAME}") {
-                    sh 'npm install --production'
+                    sh '''
+                        node --version
+                        npm --version
+                        npm install --production
+                    '''
                 }
             }
         }
@@ -38,8 +43,10 @@ pipeline {
         
         stage('Code Quality Analysis') {
             steps {
-                echo 'Running SonarQube analysis...'
-                sh 'echo "SonarQube analysis would run here"'
+                echo 'Running code quality checks...'
+                dir("${SERVICE_NAME}") {
+                    sh 'npm audit || echo "Audit complete"'
+                }
             }
         }
         
@@ -47,7 +54,7 @@ pipeline {
             steps {
                 echo 'Building Docker image...'
                 dir("${SERVICE_NAME}") {
-                    sh 'echo "Docker build would happen here"'
+                    sh 'echo "Docker build placeholder"'
                 }
             }
         }
@@ -56,11 +63,15 @@ pipeline {
             steps {
                 echo "Deploying to ${APP_SERVER_1}..."
                 sh """
-                    scp -r ${SERVICE_NAME}/* ec2-user@${APP_SERVER_1}:~/services/${SERVICE_NAME}/
-                    ssh ec2-user@${APP_SERVER_1} '
-                        cd ~/services/${SERVICE_NAME} &&
-                        npm install --production &&
+                    cd ${SERVICE_NAME}
+                    tar -czf product-service.tar.gz .
+                    scp -o StrictHostKeyChecking=no product-service.tar.gz ec2-user@${APP_SERVER_1}:/tmp/
+                    ssh -o StrictHostKeyChecking=no ec2-user@${APP_SERVER_1} '
+                        cd ~/services/${SERVICE_NAME}
+                        tar -xzf /tmp/product-service.tar.gz
+                        npm install --production
                         pm2 restart ${SERVICE_NAME} || pm2 start server.js --name ${SERVICE_NAME}
+                        rm /tmp/product-service.tar.gz
                     '
                 """
             }
@@ -70,11 +81,14 @@ pipeline {
             steps {
                 echo "Deploying to ${APP_SERVER_2}..."
                 sh """
-                    scp -r ${SERVICE_NAME}/* ec2-user@${APP_SERVER_2}:~/services/${SERVICE_NAME}/
-                    ssh ec2-user@${APP_SERVER_2} '
-                        cd ~/services/${SERVICE_NAME} &&
-                        npm install --production &&
+                    cd ${SERVICE_NAME}
+                    scp -o StrictHostKeyChecking=no product-service.tar.gz ec2-user@${APP_SERVER_2}:/tmp/
+                    ssh -o StrictHostKeyChecking=no ec2-user@${APP_SERVER_2} '
+                        cd ~/services/${SERVICE_NAME}
+                        tar -xzf /tmp/product-service.tar.gz
+                        npm install --production
                         pm2 restart ${SERVICE_NAME} || pm2 start server.js --name ${SERVICE_NAME}
+                        rm /tmp/product-service.tar.gz
                     '
                 """
             }
@@ -87,6 +101,7 @@ pipeline {
                     sleep 5
                     curl -f http://${APP_SERVER_1}:${SERVICE_PORT}/health || exit 1
                     curl -f http://${APP_SERVER_2}:${SERVICE_PORT}/health || exit 1
+                    echo "All health checks passed!"
                 """
             }
         }
@@ -94,7 +109,7 @@ pipeline {
         stage('Integration Tests') {
             steps {
                 echo 'Running integration tests...'
-                sh 'echo "Integration tests would run here"'
+                sh 'echo "Integration tests placeholder"'
             }
         }
     }
@@ -106,11 +121,12 @@ pipeline {
         }
         failure {
             echo 'Pipeline failed!'
-            echo 'Rolling back to previous version...'
+            echo 'Check logs for details'
         }
         always {
-            echo 'Cleaning up workspace...'
-            cleanWs()
+            echo 'Cleaning up temporary files...'
+            sh 'rm -f */product-service.tar.gz || true'
+            deleteDir()
         }
     }
 }
