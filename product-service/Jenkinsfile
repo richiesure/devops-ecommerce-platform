@@ -1,77 +1,20 @@
 pipeline {
     agent any
-
+    
     environment {
         SERVICE_NAME = 'product-service'
-        APP_SERVER_1 = '10.0.11.51'
-        APP_SERVER_2 = '10.0.12.197'
+        SERVICE_PORT = '3000'
+        GITHUB_REPO = 'https://github.com/richiesure/devops-ecommerce-platform.git'
+        AWS_REGION = 'eu-west-2'
     }
-
+    
     stages {
-
- (Fix Jenkins deployment: Use host SSH instead of container SSH)
         stage('Checkout') {
             steps {
                 echo 'Checking out source code...'
                 git branch: 'main',
-
                     url: "${GITHUB_REPO}",
                     credentialsId: 'gits-cred'
-
- (Fix Jenkinsfiles: correct GitHub URL, remove duplicate checkout, fix workspace cleanup)
-            }
-        }
-
-        stage('Build') {
-            steps {
-                echo 'No build step defined for product-service (skipping)'
-            }
-        }
-
-        stage('Package') {
-            steps {
-                echo 'Packaging product-service...'
-                dir('product-service') {
-                    sh 'tar -czf product-service.tar.gz .'
-                }
-            }
-        }
-
-        stage('Deploy') {
-            parallel {
-
-                stage('Deploy to Server 1') {
-                    steps {
-                        sh """
-                        scp -o StrictHostKeyChecking=no product-service/product-service.tar.gz ec2-user@${APP_SERVER_1}:/tmp/
-                        ssh -o StrictHostKeyChecking=no ec2-user@${APP_SERVER_1} '
-                            mkdir -p ~/services/product-service
-                            tar -xzf /tmp/product-service.tar.gz -C ~/services/product-service
-                        '
-                        """
-                    }
-                }
-
-                stage('Deploy to Server 2') {
-                    steps {
-                        sh """
-                        scp -o StrictHostKeyChecking=no product-service/product-service.tar.gz ec2-user@${APP_SERVER_2}:/tmp/
-                        ssh -o StrictHostKeyChecking=no ec2-user@${APP_SERVER_2} '
-                            mkdir -p ~/services/product-service
-                            tar -xzf /tmp/product-service.tar.gz -C ~/services/product-service
-                        '
-                        """
-                    }
-                }
-
-                    url: 'https://github.com/richiesure/devops-ecommerce-platform.git',
-                    credentialsId: 'gits-cred'
-            }
-        }
-        
-        stage('Build') {
-            steps {
-                echo "No build step defined for ${SERVICE_NAME} (skipping)"
             }
         }
         
@@ -84,22 +27,45 @@ pipeline {
             }
         }
         
-        stage('Deploy') {
+        stage('Upload to S3') {
+            steps {
+                echo 'Uploading package to S3...'
+                sh """
+                    aws s3 cp ${SERVICE_NAME}/${SERVICE_NAME}.tar.gz \
+                        s3://richie-s3/deployments/${SERVICE_NAME}/ \
+                        --region ${AWS_REGION}
+                """
+            }
+        }
+        
+        stage('Deploy via SSM') {
             parallel {
                 stage('Deploy to Server 1') {
                     steps {
                         script {
                             sh """
-                                docker cp ${WORKSPACE}/${SERVICE_NAME}/${SERVICE_NAME}.tar.gz jenkins-host:/tmp/
-                                docker exec jenkins-host bash -c '
-                                    scp -o StrictHostKeyChecking=no /tmp/${SERVICE_NAME}.tar.gz ec2-user@${APP_SERVER_1}:/tmp/ &&
-                                    ssh -o StrictHostKeyChecking=no ec2-user@${APP_SERVER_1} "
-                                        cd ~/services/${SERVICE_NAME} &&
-                                        tar -xzf /tmp/${SERVICE_NAME}.tar.gz &&
-                                        npm install --production &&
-                                        pm2 restart ${SERVICE_NAME} || pm2 start server.js --name ${SERVICE_NAME}
-                                    "
-                                '
+                                APP1_ID=\$(aws ec2 describe-instances \
+                                    --filters "Name=tag:Name,Values=devops-ecommerce-app-1" \
+                                             "Name=instance-state-name,Values=running" \
+                                    --query 'Reservations[0].Instances[0].InstanceId' \
+                                    --output text \
+                                    --region ${AWS_REGION})
+                                
+                                aws ssm send-command \
+                                    --instance-ids \$APP1_ID \
+                                    --document-name "AWS-RunShellScript" \
+                                    --parameters 'commands=[
+                                        "cd /tmp",
+                                        "aws s3 cp s3://richie-s3/deployments/${SERVICE_NAME}/${SERVICE_NAME}.tar.gz .",
+                                        "cd ~/services/${SERVICE_NAME}",
+                                        "tar -xzf /tmp/${SERVICE_NAME}.tar.gz",
+                                        "npm install --production",
+                                        "pm2 restart ${SERVICE_NAME} || pm2 start server.js --name ${SERVICE_NAME}",
+                                        "rm /tmp/${SERVICE_NAME}.tar.gz"
+                                    ]' \
+                                    --region ${AWS_REGION}
+                                
+                                echo "Deployment command sent to Server 1"
                             """
                         }
                     }
@@ -109,15 +75,28 @@ pipeline {
                     steps {
                         script {
                             sh """
-                                docker exec jenkins-host bash -c '
-                                    scp -o StrictHostKeyChecking=no /tmp/${SERVICE_NAME}.tar.gz ec2-user@${APP_SERVER_2}:/tmp/ &&
-                                    ssh -o StrictHostKeyChecking=no ec2-user@${APP_SERVER_2} "
-                                        cd ~/services/${SERVICE_NAME} &&
-                                        tar -xzf /tmp/${SERVICE_NAME}.tar.gz &&
-                                        npm install --production &&
-                                        pm2 restart ${SERVICE_NAME} || pm2 start server.js --name ${SERVICE_NAME}
-                                    "
-                                '
+                                APP2_ID=\$(aws ec2 describe-instances \
+                                    --filters "Name=tag:Name,Values=devops-ecommerce-app-2" \
+                                             "Name=instance-state-name,Values=running" \
+                                    --query 'Reservations[0].Instances[0].InstanceId' \
+                                    --output text \
+                                    --region ${AWS_REGION})
+                                
+                                aws ssm send-command \
+                                    --instance-ids \$APP2_ID \
+                                    --document-name "AWS-RunShellScript" \
+                                    --parameters 'commands=[
+                                        "cd /tmp",
+                                        "aws s3 cp s3://richie-s3/deployments/${SERVICE_NAME}/${SERVICE_NAME}.tar.gz .",
+                                        "cd ~/services/${SERVICE_NAME}",
+                                        "tar -xzf /tmp/${SERVICE_NAME}.tar.gz",
+                                        "npm install --production",
+                                        "pm2 restart ${SERVICE_NAME} || pm2 start server.js --name ${SERVICE_NAME}",
+                                        "rm /tmp/${SERVICE_NAME}.tar.gz"
+                                    ]' \
+                                    --region ${AWS_REGION}
+                                
+                                echo "Deployment command sent to Server 2"
                             """
                         }
                     }
@@ -125,40 +104,41 @@ pipeline {
             }
         }
         
-        stage('Verify') {
+        stage('Wait for Deployment') {
             steps {
-                echo 'Verifying deployments...'
+                echo 'Waiting for deployment to complete...'
+                sleep time: 30, unit: 'SECONDS'
+            }
+        }
+        
+        stage('Health Check') {
+            steps {
+                echo 'Running health checks...'
                 sh """
-                    sleep 5
-                    curl -f http://${APP_SERVER_1}:${SERVICE_PORT}/health || echo "Server 1 health check failed"
-                    curl -f http://${APP_SERVER_2}:${SERVICE_PORT}/health || echo "Server 2 health check failed"
+                    APP1_IP="10.0.11.51"
+                    APP2_IP="10.0.12.197"
+                    
+                    echo "Checking Server 1..."
+                    curl -f http://\$APP1_IP:${SERVICE_PORT}/health || echo "Server 1 health check failed"
+                    
+                    echo "Checking Server 2..."
+                    curl -f http://\$APP2_IP:${SERVICE_PORT}/health || echo "Server 2 health check failed"
                 """
- (Fix Jenkins deployment: Use host SSH instead of container SSH)
             }
         }
     }
-
+    
     post {
         success {
-
-            echo '✅ Product service deployed successfully'
+            deleteDir()
+            echo "Product service deployed successfully"
         }
         failure {
-            echo '❌ Product service deployment failed'
+            deleteDir()
+            echo "Product service deployment failed"
         }
         always {
-
-
-            echo 'Cleaning up workspace...'
- (Fix Jenkinsfiles: correct GitHub URL, remove duplicate checkout, fix workspace cleanup)
-
-            deleteDir()
-            echo "✅ Product service deployed successfully"
-        }
-        failure {
- (Fix Jenkins deployment: Use host SSH instead of container SSH)
-            deleteDir()
-            echo "❌ Product service deployment failed"
+            echo "Pipeline completed"
         }
     }
 }
