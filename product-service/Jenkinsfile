@@ -5,20 +5,20 @@ pipeline {
         SERVICE_NAME = 'product-service'
         APP_SERVER_1 = '10.0.11.51'
         APP_SERVER_2 = '10.0.12.197'
-        GITHUB_REPO = 'https://github.com/richiesure/devops-ecommerce-platform.git'
     }
 
     stages {
-<<<<<<< HEAD
 
+ (Fix Jenkins deployment: Use host SSH instead of container SSH)
         stage('Checkout') {
             steps {
                 echo 'Checking out source code...'
                 git branch: 'main',
+
                     url: "${GITHUB_REPO}",
                     credentialsId: 'gits-cred'
-=======
->>>>>>> b0335a3 (Fix Jenkinsfiles: correct GitHub URL, remove duplicate checkout, fix workspace cleanup)
+
+ (Fix Jenkinsfiles: correct GitHub URL, remove duplicate checkout, fix workspace cleanup)
             }
         }
 
@@ -63,23 +63,102 @@ pipeline {
                         """
                     }
                 }
+
+                    url: 'https://github.com/richiesure/devops-ecommerce-platform.git',
+                    credentialsId: 'gits-cred'
+            }
+        }
+        
+        stage('Build') {
+            steps {
+                echo "No build step defined for ${SERVICE_NAME} (skipping)"
+            }
+        }
+        
+        stage('Package') {
+            steps {
+                echo "Packaging ${SERVICE_NAME}..."
+                dir("${SERVICE_NAME}") {
+                    sh "tar -czf ${SERVICE_NAME}.tar.gz ."
+                }
+            }
+        }
+        
+        stage('Deploy') {
+            parallel {
+                stage('Deploy to Server 1') {
+                    steps {
+                        script {
+                            sh """
+                                docker cp ${WORKSPACE}/${SERVICE_NAME}/${SERVICE_NAME}.tar.gz jenkins-host:/tmp/
+                                docker exec jenkins-host bash -c '
+                                    scp -o StrictHostKeyChecking=no /tmp/${SERVICE_NAME}.tar.gz ec2-user@${APP_SERVER_1}:/tmp/ &&
+                                    ssh -o StrictHostKeyChecking=no ec2-user@${APP_SERVER_1} "
+                                        cd ~/services/${SERVICE_NAME} &&
+                                        tar -xzf /tmp/${SERVICE_NAME}.tar.gz &&
+                                        npm install --production &&
+                                        pm2 restart ${SERVICE_NAME} || pm2 start server.js --name ${SERVICE_NAME}
+                                    "
+                                '
+                            """
+                        }
+                    }
+                }
+                
+                stage('Deploy to Server 2') {
+                    steps {
+                        script {
+                            sh """
+                                docker exec jenkins-host bash -c '
+                                    scp -o StrictHostKeyChecking=no /tmp/${SERVICE_NAME}.tar.gz ec2-user@${APP_SERVER_2}:/tmp/ &&
+                                    ssh -o StrictHostKeyChecking=no ec2-user@${APP_SERVER_2} "
+                                        cd ~/services/${SERVICE_NAME} &&
+                                        tar -xzf /tmp/${SERVICE_NAME}.tar.gz &&
+                                        npm install --production &&
+                                        pm2 restart ${SERVICE_NAME} || pm2 start server.js --name ${SERVICE_NAME}
+                                    "
+                                '
+                            """
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Verify') {
+            steps {
+                echo 'Verifying deployments...'
+                sh """
+                    sleep 5
+                    curl -f http://${APP_SERVER_1}:${SERVICE_PORT}/health || echo "Server 1 health check failed"
+                    curl -f http://${APP_SERVER_2}:${SERVICE_PORT}/health || echo "Server 2 health check failed"
+                """
+ (Fix Jenkins deployment: Use host SSH instead of container SSH)
             }
         }
     }
 
     post {
         success {
+
             echo '✅ Product service deployed successfully'
         }
         failure {
             echo '❌ Product service deployment failed'
         }
         always {
-<<<<<<< HEAD
-=======
+
+
             echo 'Cleaning up workspace...'
->>>>>>> b0335a3 (Fix Jenkinsfiles: correct GitHub URL, remove duplicate checkout, fix workspace cleanup)
+ (Fix Jenkinsfiles: correct GitHub URL, remove duplicate checkout, fix workspace cleanup)
+
             deleteDir()
+            echo "✅ Product service deployed successfully"
+        }
+        failure {
+ (Fix Jenkins deployment: Use host SSH instead of container SSH)
+            deleteDir()
+            echo "❌ Product service deployment failed"
         }
     }
 }
