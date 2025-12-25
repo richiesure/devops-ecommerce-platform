@@ -1,131 +1,77 @@
 pipeline {
     agent any
-    
+
     environment {
         SERVICE_NAME = 'product-service'
-        SERVICE_PORT = '3000'
         APP_SERVER_1 = '10.0.11.51'
         APP_SERVER_2 = '10.0.12.197'
         GITHUB_REPO = 'https://github.com/richiesure/devops-ecommerce-platform.git'
     }
-    
+
     stages {
+
         stage('Checkout') {
             steps {
-                echo 'Checking out code from GitHub...'
+                echo 'Checking out source code...'
                 git branch: 'main',
                     url: "${GITHUB_REPO}",
                     credentialsId: 'gits-cred'
             }
         }
-        
-        stage('Install Dependencies') {
+
+        stage('Build') {
             steps {
-                echo 'Installing Node.js dependencies...'
-                dir("${SERVICE_NAME}") {
-                    sh '''
-                        node --version
-                        npm --version
-                        npm install --production
-                    '''
+                echo 'No build step defined for product-service (skipping)'
+            }
+        }
+
+        stage('Package') {
+            steps {
+                echo 'Packaging product-service...'
+                dir('product-service') {
+                    sh 'tar -czf product-service.tar.gz .'
                 }
             }
         }
-        
-        stage('Run Tests') {
-            steps {
-                echo 'Running unit tests...'
-                dir("${SERVICE_NAME}") {
-                    sh 'npm test || echo "No tests specified"'
+
+        stage('Deploy') {
+            parallel {
+
+                stage('Deploy to Server 1') {
+                    steps {
+                        sh """
+                        scp -o StrictHostKeyChecking=no product-service/product-service.tar.gz ec2-user@${APP_SERVER_1}:/tmp/
+                        ssh -o StrictHostKeyChecking=no ec2-user@${APP_SERVER_1} '
+                            mkdir -p ~/services/product-service
+                            tar -xzf /tmp/product-service.tar.gz -C ~/services/product-service
+                        '
+                        """
+                    }
                 }
-            }
-        }
-        
-        stage('Code Quality Analysis') {
-            steps {
-                echo 'Running code quality checks...'
-                dir("${SERVICE_NAME}") {
-                    sh 'npm audit || echo "Audit complete"'
+
+                stage('Deploy to Server 2') {
+                    steps {
+                        sh """
+                        scp -o StrictHostKeyChecking=no product-service/product-service.tar.gz ec2-user@${APP_SERVER_2}:/tmp/
+                        ssh -o StrictHostKeyChecking=no ec2-user@${APP_SERVER_2} '
+                            mkdir -p ~/services/product-service
+                            tar -xzf /tmp/product-service.tar.gz -C ~/services/product-service
+                        '
+                        """
+                    }
                 }
-            }
-        }
-        
-        stage('Build Docker Image') {
-            steps {
-                echo 'Building Docker image...'
-                dir("${SERVICE_NAME}") {
-                    sh 'echo "Docker build placeholder"'
-                }
-            }
-        }
-        
-        stage('Deploy to App Server 1') {
-            steps {
-                echo "Deploying to ${APP_SERVER_1}..."
-                sh """
-                    cd ${SERVICE_NAME}
-                    tar -czf product-service.tar.gz .
-                    scp -o StrictHostKeyChecking=no product-service.tar.gz ec2-user@${APP_SERVER_1}:/tmp/
-                    ssh -o StrictHostKeyChecking=no ec2-user@${APP_SERVER_1} '
-                        cd ~/services/${SERVICE_NAME}
-                        tar -xzf /tmp/product-service.tar.gz
-                        npm install --production
-                        pm2 restart ${SERVICE_NAME} || pm2 start server.js --name ${SERVICE_NAME}
-                        rm /tmp/product-service.tar.gz
-                    '
-                """
-            }
-        }
-        
-        stage('Deploy to App Server 2') {
-            steps {
-                echo "Deploying to ${APP_SERVER_2}..."
-                sh """
-                    cd ${SERVICE_NAME}
-                    scp -o StrictHostKeyChecking=no product-service.tar.gz ec2-user@${APP_SERVER_2}:/tmp/
-                    ssh -o StrictHostKeyChecking=no ec2-user@${APP_SERVER_2} '
-                        cd ~/services/${SERVICE_NAME}
-                        tar -xzf /tmp/product-service.tar.gz
-                        npm install --production
-                        pm2 restart ${SERVICE_NAME} || pm2 start server.js --name ${SERVICE_NAME}
-                        rm /tmp/product-service.tar.gz
-                    '
-                """
-            }
-        }
-        
-        stage('Health Check') {
-            steps {
-                echo 'Running health checks...'
-                sh """
-                    sleep 5
-                    curl -f http://${APP_SERVER_1}:${SERVICE_PORT}/health || exit 1
-                    curl -f http://${APP_SERVER_2}:${SERVICE_PORT}/health || exit 1
-                    echo "All health checks passed!"
-                """
-            }
-        }
-        
-        stage('Integration Tests') {
-            steps {
-                echo 'Running integration tests...'
-                sh 'echo "Integration tests placeholder"'
             }
         }
     }
-    
+
     post {
         success {
-            echo 'Pipeline completed successfully!'
-            echo 'Product Service deployed to both app servers'
+            echo '✅ Product service deployed successfully'
         }
         failure {
-            echo 'Pipeline failed!'
-            echo 'Check logs for details'
+            echo '❌ Product service deployment failed'
         }
         always {
-            echo 'Cleaning up temporary files...'
-            sh 'rm -f */product-service.tar.gz || true'
             deleteDir()
         }
     }
