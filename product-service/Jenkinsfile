@@ -8,6 +8,12 @@ pipeline {
     }
 
     stages {
+        stage('Checkout') {
+            steps {
+                echo 'Checking out source code...'
+                checkout scm
+            }
+        }
 
         stage('Package') {
             steps {
@@ -31,7 +37,6 @@ pipeline {
 
         stage('Deploy via SSM') {
             parallel {
-
                 stage('Deploy to Server 1') {
                     steps {
                         sh """
