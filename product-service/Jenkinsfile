@@ -5,8 +5,6 @@ pipeline {
         SERVICE_NAME = 'product-service'
         SERVICE_PORT = '3000'
         AWS_REGION = 'eu-west-2'
-        APP_SERVER_1 = '10.0.11.51'
-        APP_SERVER_2 = '10.0.12.197'
         GITHUB_REPO = 'https://github.com/richiesure/devops-ecommerce-platform.git'
     }
 
