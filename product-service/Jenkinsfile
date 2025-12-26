@@ -1,23 +1,14 @@
 pipeline {
     agent any
-    
+
     environment {
         SERVICE_NAME = 'product-service'
         SERVICE_PORT = '3000'
-        GITHUB_REPO = 'https://github.com/richiesure/devops-ecommerce-platform.git'
         AWS_REGION = 'eu-west-2'
     }
-    
+
     stages {
-        stage('Checkout') {
-            steps {
-                echo 'Checking out source code...'
-                git branch: 'main',
-                    url: "${GITHUB_REPO}",
-                    credentialsId: 'gits-cred'
-            }
-        }
-        
+
         stage('Package') {
             steps {
                 echo "Packaging ${SERVICE_NAME}..."
@@ -26,7 +17,7 @@ pipeline {
                 }
             }
         }
-        
+
         stage('Upload to S3') {
             steps {
                 echo 'Uploading package to S3...'
@@ -37,108 +28,92 @@ pipeline {
                 """
             }
         }
-        
+
         stage('Deploy via SSM') {
             parallel {
+
                 stage('Deploy to Server 1') {
                     steps {
-                        script {
-                            sh """
-                                APP1_ID=\$(aws ec2 describe-instances \
-                                    --filters "Name=tag:Name,Values=devops-ecommerce-app-1" \
-                                             "Name=instance-state-name,Values=running" \
-                                    --query 'Reservations[0].Instances[0].InstanceId' \
-                                    --output text \
-                                    --region ${AWS_REGION})
-                                
-                                aws ssm send-command \
-                                    --instance-ids \$APP1_ID \
-                                    --document-name "AWS-RunShellScript" \
-                                    --parameters 'commands=[
-                                        "cd /tmp",
-                                        "aws s3 cp s3://richie-s3/deployments/${SERVICE_NAME}/${SERVICE_NAME}.tar.gz .",
-                                        "cd ~/services/${SERVICE_NAME}",
-                                        "tar -xzf /tmp/${SERVICE_NAME}.tar.gz",
-                                        "npm install --production",
-                                        "pm2 restart ${SERVICE_NAME} || pm2 start server.js --name ${SERVICE_NAME}",
-                                        "rm /tmp/${SERVICE_NAME}.tar.gz"
-                                    ]' \
-                                    --region ${AWS_REGION}
-                                
-                                echo "Deployment command sent to Server 1"
-                            """
-                        }
+                        sh """
+                            APP1_ID=\$(aws ec2 describe-instances \
+                                --filters "Name=tag:Name,Values=devops-ecommerce-app-1" \
+                                         "Name=instance-state-name,Values=running" \
+                                --query 'Reservations[0].Instances[0].InstanceId' \
+                                --output text \
+                                --region ${AWS_REGION})
+
+                            aws ssm send-command \
+                                --instance-ids \$APP1_ID \
+                                --document-name "AWS-RunShellScript" \
+                                --parameters 'commands=[
+                                    "cd /tmp",
+                                    "aws s3 cp s3://richie-s3/deployments/${SERVICE_NAME}/${SERVICE_NAME}.tar.gz .",
+                                    "cd ~/services/${SERVICE_NAME}",
+                                    "tar -xzf /tmp/${SERVICE_NAME}.tar.gz",
+                                    "npm install --production",
+                                    "pm2 restart ${SERVICE_NAME} || pm2 start server.js --name ${SERVICE_NAME}",
+                                    "rm /tmp/${SERVICE_NAME}.tar.gz"
+                                ]' \
+                                --region ${AWS_REGION}
+                        """
                     }
                 }
-                
+
                 stage('Deploy to Server 2') {
                     steps {
-                        script {
-                            sh """
-                                APP2_ID=\$(aws ec2 describe-instances \
-                                    --filters "Name=tag:Name,Values=devops-ecommerce-app-2" \
-                                             "Name=instance-state-name,Values=running" \
-                                    --query 'Reservations[0].Instances[0].InstanceId' \
-                                    --output text \
-                                    --region ${AWS_REGION})
-                                
-                                aws ssm send-command \
-                                    --instance-ids \$APP2_ID \
-                                    --document-name "AWS-RunShellScript" \
-                                    --parameters 'commands=[
-                                        "cd /tmp",
-                                        "aws s3 cp s3://richie-s3/deployments/${SERVICE_NAME}/${SERVICE_NAME}.tar.gz .",
-                                        "cd ~/services/${SERVICE_NAME}",
-                                        "tar -xzf /tmp/${SERVICE_NAME}.tar.gz",
-                                        "npm install --production",
-                                        "pm2 restart ${SERVICE_NAME} || pm2 start server.js --name ${SERVICE_NAME}",
-                                        "rm /tmp/${SERVICE_NAME}.tar.gz"
-                                    ]' \
-                                    --region ${AWS_REGION}
-                                
-                                echo "Deployment command sent to Server 2"
-                            """
-                        }
+                        sh """
+                            APP2_ID=\$(aws ec2 describe-instances \
+                                --filters "Name=tag:Name,Values=devops-ecommerce-app-2" \
+                                         "Name=instance-state-name,Values=running" \
+                                --query 'Reservations[0].Instances[0].InstanceId' \
+                                --output text \
+                                --region ${AWS_REGION})
+
+                            aws ssm send-command \
+                                --instance-ids \$APP2_ID \
+                                --document-name "AWS-RunShellScript" \
+                                --parameters 'commands=[
+                                    "cd /tmp",
+                                    "aws s3 cp s3://richie-s3/deployments/${SERVICE_NAME}/${SERVICE_NAME}.tar.gz .",
+                                    "cd ~/services/${SERVICE_NAME}",
+                                    "tar -xzf /tmp/${SERVICE_NAME}.tar.gz",
+                                    "npm install --production",
+                                    "pm2 restart ${SERVICE_NAME} || pm2 start server.js --name ${SERVICE_NAME}",
+                                    "rm /tmp/${SERVICE_NAME}.tar.gz"
+                                ]' \
+                                --region ${AWS_REGION}
+                        """
                     }
                 }
             }
         }
-        
+
         stage('Wait for Deployment') {
             steps {
-                echo 'Waiting for deployment to complete...'
                 sleep time: 30, unit: 'SECONDS'
             }
         }
-        
+
         stage('Health Check') {
             steps {
-                echo 'Running health checks...'
                 sh """
-                    APP1_IP="10.0.11.51"
-                    APP2_IP="10.0.12.197"
-                    
-                    echo "Checking Server 1..."
-                    curl -f http://\$APP1_IP:${SERVICE_PORT}/health || echo "Server 1 health check failed"
-                    
-                    echo "Checking Server 2..."
-                    curl -f http://\$APP2_IP:${SERVICE_PORT}/health || echo "Server 2 health check failed"
+                    curl -f http://10.0.11.51:${SERVICE_PORT}/health || echo "Server 1 failed"
+                    curl -f http://10.0.12.197:${SERVICE_PORT}/health || echo "Server 2 failed"
                 """
             }
         }
     }
-    
+
     post {
-        success {
+        always {
             deleteDir()
+            echo "Pipeline completed"
+        }
+        success {
             echo "Product service deployed successfully"
         }
         failure {
-            deleteDir()
             echo "Product service deployment failed"
-        }
-        always {
-            echo "Pipeline completed"
         }
     }
 }
