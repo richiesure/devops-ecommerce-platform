@@ -21,7 +21,9 @@ pipeline {
                 dir("${SERVICE_NAME}") {
                     sh '''
                         python3 --version
-                        pip3 install -r requirements.txt --user
+                        python3 -m ensurepip --upgrade
+                        python3 -m pip install --upgrade pip --user
+                        python3 -m pip install -r requirements.txt --user
                     '''
                 }
             }
@@ -67,8 +69,9 @@ pipeline {
                                     "aws s3 cp s3://richie-s3/deployments/${SERVICE_NAME}/${SERVICE_NAME}.tar.gz .",
                                     "cd ~/services/${SERVICE_NAME}",
                                     "tar -xzf /tmp/${SERVICE_NAME}.tar.gz",
-                                    "python3.11 -m pip install -r requirements.txt --user",
-                                    "pm2 restart ${SERVICE_NAME} || pm2 start app.py --name ${SERVICE_NAME} --interpreter python3.11",
+                                    "python3 -m pip install --upgrade pip --user",
+                                    "python3 -m pip install -r requirements.txt --user",
+                                    "pm2 restart ${SERVICE_NAME} || pm2 start app.py --name ${SERVICE_NAME} --interpreter python3",
                                     "rm /tmp/${SERVICE_NAME}.tar.gz"
                                 ]' \
                                 --region ${AWS_REGION}
@@ -94,8 +97,9 @@ pipeline {
                                     "aws s3 cp s3://richie-s3/deployments/${SERVICE_NAME}/${SERVICE_NAME}.tar.gz .",
                                     "cd ~/services/${SERVICE_NAME}",
                                     "tar -xzf /tmp/${SERVICE_NAME}.tar.gz",
-                                    "python3.11 -m pip install -r requirements.txt --user",
-                                    "pm2 restart ${SERVICE_NAME} || pm2 start app.py --name ${SERVICE_NAME} --interpreter python3.11",
+                                    "python3 -m pip install --upgrade pip --user",
+                                    "python3 -m pip install -r requirements.txt --user",
+                                    "pm2 restart ${SERVICE_NAME} || pm2 start app.py --name ${SERVICE_NAME} --interpreter python3",
                                     "rm /tmp/${SERVICE_NAME}.tar.gz"
                                 ]' \
                                 --region ${AWS_REGION}
@@ -107,12 +111,14 @@ pipeline {
 
         stage('Wait for Deployment') {
             steps {
+                echo "Waiting for services to come online..."
                 sleep time: 30, unit: 'SECONDS'
             }
         }
 
         stage('Health Check') {
             steps {
+                echo "Running health checks..."
                 sh """
                     curl -f http://10.0.11.51:${SERVICE_PORT}/health || echo "Server 1 failed"
                     curl -f http://10.0.12.197:${SERVICE_PORT}/health || echo "Server 2 failed"
