@@ -17,25 +17,30 @@ pipeline {
         }
 
         stage('Install Dependencies') {
-            steps {
-                echo 'Installing Python dependencies...'
-                dir("${SERVICE_NAME}") {
-                    sh '''
-                        export PATH=/usr/local/bin:$HOME/.local/bin:$PATH
+        steps {
+        echo 'Installing Python dependencies in a virtual environment...'
+        dir("${SERVICE_NAME}") {
+            sh '''
+                export PATH=/usr/local/bin:$HOME/.local/bin:$PATH
 
-                        # Verify Python
-                        python3 --version
+                # Create a virtual environment
+                python3 -m venv venv
 
-                        # Ensure pip is installed and upgraded
-                        python3 -m ensurepip || true
-                        python3 -m pip install --upgrade pip --user
+                # Activate the virtual environment
+                source venv/bin/activate
 
-                        # Install project dependencies
-                        python3 -m pip install -r requirements.txt --user
-                    '''
+                # Upgrade pip inside the virtual environment
+                pip install --upgrade pip
+
+                # Install project dependencies inside venv
+                pip install -r requirements.txt
+
+                echo "Python dependencies installed successfully in venv."
+            '''
                 }
             }
         }
+
 
         stage('Package') {
             steps {
