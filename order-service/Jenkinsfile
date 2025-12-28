@@ -2,11 +2,13 @@ pipeline {
     agent any
 
     environment {
-        SERVICE_NAME = 'order-service'
-        SERVICE_PORT = '5000'
-        AWS_REGION = 'eu-west-2'
-        DEPLOY_DIR = '/home/ec2-user/services/order-service'
-        PATH = "/usr/local/bin:$HOME/.local/bin:${env.PATH}"
+        AWS_REGION = "eu-west-2"
+        S3_BUCKET  = "ecommerce-deploy-artifacts"
+        SERVICE_NAME = "order-service"
+        PACKAGE_NAME = "order-service.tar.gz"
+
+        SERVER_1 = "i-xxxxxxxxxxxxxxx"
+        SERVER_2 = "i-yyyyyyyyyyyyyyy"
     }
 
     stages {
@@ -20,14 +22,15 @@ pipeline {
 
         stage('Install Dependencies (Jenkins)') {
             steps {
-                echo 'Installing Python dependencies in Jenkins container...'
-                dir("${SERVICE_NAME}") {
+                echo 'Creating virtual environment and installing dependencies...'
+                dir('order-service') {
                     sh '''
                         python3 --version
-                        pip3 --version
+                        python3 -m venv venv
+                        . venv/bin/activate
 
-                        python3 -m pip install --upgrade pip --user
-                        pip3 install -r requirements.txt --user
+                        pip install --upgrade pip
+                        pip install -r requirements.txt
                     '''
                 }
             }
@@ -35,52 +38,46 @@ pipeline {
 
         stage('Package') {
             steps {
-                echo "Packaging ${SERVICE_NAME}..."
-                dir("${SERVICE_NAME}") {
-                    sh "tar -czf ${SERVICE_NAME}.tar.gz app.py requirements.txt"
+                echo 'Packaging application...'
+                dir('order-service') {
+                    sh '''
+                        rm -f ${PACKAGE_NAME}
+                        tar --exclude=venv -czf ${PACKAGE_NAME} app.py requirements.txt
+                        ls -lh ${PACKAGE_NAME}
+                    '''
                 }
             }
         }
 
         stage('Upload to S3') {
             steps {
-                echo 'Uploading package to S3...'
-                sh """
-                    aws s3 cp ${SERVICE_NAME}/${SERVICE_NAME}.tar.gz \
-                      s3://richie-s3/deployments/${SERVICE_NAME}/ \
-                      --region ${AWS_REGION}
-                """
+                echo 'Uploading artifact to S3...'
+                dir('order-service') {
+                    sh '''
+                        aws s3 cp ${PACKAGE_NAME} s3://${S3_BUCKET}/${SERVICE_NAME}/${PACKAGE_NAME} \
+                          --region ${AWS_REGION}
+                    '''
+                }
             }
         }
 
         stage('Deploy via SSM') {
             parallel {
-
                 stage('Deploy to Server 1') {
                     steps {
                         sh """
-                        APP1_ID=\$(aws ec2 describe-instances \
-                          --filters "Name=tag:Name,Values=devops-ecommerce-app-1" \
-                                   "Name=instance-state-name,Values=running" \
-                          --query 'Reservations[0].Instances[0].InstanceId' \
-                          --output text \
-                          --region ${AWS_REGION})
-
                         aws ssm send-command \
-                          --instance-ids \$APP1_ID \
-                          --document-name AWS-RunShellScript \
-                          --parameters commands="
-                            mkdir -p ${DEPLOY_DIR}
-                            cd ${DEPLOY_DIR}
-                            aws s3 cp s3://richie-s3/deployments/${SERVICE_NAME}/${SERVICE_NAME}.tar.gz .
-                            tar -xzf ${SERVICE_NAME}.tar.gz
-                            python3 -m venv venv || true
-                            . venv/bin/activate
-                            pip install --upgrade pip
-                            pip install -r requirements.txt
-                            pm2 restart ${SERVICE_NAME} || pm2 start app.py --name ${SERVICE_NAME} --interpreter python3
-                          " \
-                          --region ${AWS_REGION}
+                          --region ${AWS_REGION} \
+                          --instance-ids ${SERVER_1} \
+                          --document-name "AWS-RunShellScript" \
+                          --parameters commands='[
+                            "cd /opt/${SERVICE_NAME}",
+                            "aws s3 cp s3://${S3_BUCKET}/${SERVICE_NAME}/${PACKAGE_NAME} .",
+                            "tar -xzf ${PACKAGE_NAME}",
+                            "source venv/bin/activate || python3 -m venv venv",
+                            "pip install -r requirements.txt",
+                            "systemctl restart ${SERVICE_NAME}"
+                          ]'
                         """
                     }
                 }
@@ -88,28 +85,18 @@ pipeline {
                 stage('Deploy to Server 2') {
                     steps {
                         sh """
-                        APP2_ID=\$(aws ec2 describe-instances \
-                          --filters "Name=tag:Name,Values=devops-ecommerce-app-2" \
-                                   "Name=instance-state-name,Values=running" \
-                          --query 'Reservations[0].Instances[0].InstanceId' \
-                          --output text \
-                          --region ${AWS_REGION})
-
                         aws ssm send-command \
-                          --instance-ids \$APP2_ID \
-                          --document-name AWS-RunShellScript \
-                          --parameters commands="
-                            mkdir -p ${DEPLOY_DIR}
-                            cd ${DEPLOY_DIR}
-                            aws s3 cp s3://richie-s3/deployments/${SERVICE_NAME}/${SERVICE_NAME}.tar.gz .
-                            tar -xzf ${SERVICE_NAME}.tar.gz
-                            python3 -m venv venv || true
-                            . venv/bin/activate
-                            pip install --upgrade pip
-                            pip install -r requirements.txt
-                            pm2 restart ${SERVICE_NAME} || pm2 start app.py --name ${SERVICE_NAME} --interpreter python3
-                          " \
-                          --region ${AWS_REGION}
+                          --region ${AWS_REGION} \
+                          --instance-ids ${SERVER_2} \
+                          --document-name "AWS-RunShellScript" \
+                          --parameters commands='[
+                            "cd /opt/${SERVICE_NAME}",
+                            "aws s3 cp s3://${S3_BUCKET}/${SERVICE_NAME}/${PACKAGE_NAME} .",
+                            "tar -xzf ${PACKAGE_NAME}",
+                            "source venv/bin/activate || python3 -m venv venv",
+                            "pip install -r requirements.txt",
+                            "systemctl restart ${SERVICE_NAME}"
+                          ]'
                         """
                     }
                 }
@@ -118,31 +105,30 @@ pipeline {
 
         stage('Wait for Deployment') {
             steps {
-                echo "Waiting for service to stabilise..."
-                sleep time: 30, unit: 'SECONDS'
+                echo 'Waiting for service to stabilise...'
+                sleep time: 20, unit: 'SECONDS'
             }
         }
 
         stage('Health Check') {
             steps {
-                sh """
-                  curl -f http://10.0.11.51:${SERVICE_PORT}/health
-                  curl -f http://10.0.12.197:${SERVICE_PORT}/health
-                """
+                echo 'Running health check...'
+                sh '''
+                  curl -f http://order-service.internal/health || exit 1
+                '''
             }
         }
     }
 
     post {
-        always {
-            deleteDir()
-            echo "Pipeline completed"
-        }
         success {
-            echo "Order service deployed successfully"
+            echo 'Order service deployed successfully'
         }
         failure {
-            echo "Order service deployment failed"
+            echo 'Order service deployment failed'
+        }
+        always {
+            deleteDir()
         }
     }
 }
