@@ -17,7 +17,7 @@ pipeline {
         }
 
         stage('Install Dependencies') {
-        steps {
+            steps {
         echo 'Installing Python dependencies in a virtual environment...'
         dir("${SERVICE_NAME}") {
             sh '''
