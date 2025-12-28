@@ -19,7 +19,7 @@ pipeline {
             steps {
                 echo 'Installing dependencies...'
                 dir("${SERVICE_NAME}") {
-                    sh 'npm install --production'
+                    sh 'npm install --omit=dev'
                 }
             }
         }
@@ -37,7 +37,12 @@ pipeline {
             steps {
                 echo "Packaging ${SERVICE_NAME}..."
                 dir("${SERVICE_NAME}") {
-                    sh "tar -czf ${SERVICE_NAME}.tar.gz ."
+                    sh '''
+                      tar \
+                        --exclude=node_modules \
+                        --exclude=.git \
+                        -czf ${SERVICE_NAME}.tar.gz .
+                    '''
                 }
             }
         }
@@ -69,11 +74,13 @@ pipeline {
                                 --instance-ids \$APP1_ID \
                                 --document-name "AWS-RunShellScript" \
                                 --parameters 'commands=[
+                                    "set -e",
                                     "cd /tmp",
                                     "aws s3 cp s3://richie-s3/deployments/${SERVICE_NAME}/${SERVICE_NAME}.tar.gz .",
+                                    "mkdir -p ~/services/${SERVICE_NAME}",
                                     "cd ~/services/${SERVICE_NAME}",
                                     "tar -xzf /tmp/${SERVICE_NAME}.tar.gz",
-                                    "npm install --production",
+                                    "npm install --omit=dev",
                                     "pm2 restart ${SERVICE_NAME} || pm2 start server.js --name ${SERVICE_NAME}",
                                     "rm /tmp/${SERVICE_NAME}.tar.gz"
                                 ]' \
@@ -96,11 +103,13 @@ pipeline {
                                 --instance-ids \$APP2_ID \
                                 --document-name "AWS-RunShellScript" \
                                 --parameters 'commands=[
+                                    "set -e",
                                     "cd /tmp",
                                     "aws s3 cp s3://richie-s3/deployments/${SERVICE_NAME}/${SERVICE_NAME}.tar.gz .",
+                                    "mkdir -p ~/services/${SERVICE_NAME}",
                                     "cd ~/services/${SERVICE_NAME}",
                                     "tar -xzf /tmp/${SERVICE_NAME}.tar.gz",
-                                    "npm install --production",
+                                    "npm install --omit=dev",
                                     "pm2 restart ${SERVICE_NAME} || pm2 start server.js --name ${SERVICE_NAME}",
                                     "rm /tmp/${SERVICE_NAME}.tar.gz"
                                 ]' \
