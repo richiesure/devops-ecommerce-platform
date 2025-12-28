@@ -5,7 +5,7 @@ pipeline {
         SERVICE_NAME = 'order-service'
         SERVICE_PORT = '5000'
         AWS_REGION = 'eu-west-2'
-        PATH = "${env.HOME}/.local/bin:${env.PATH}" // ensures user-installed pip packages are found
+        PATH = "/usr/local/bin:$HOME/.local/bin:${env.PATH}"
     }
 
     stages {
@@ -21,9 +21,15 @@ pipeline {
                 echo 'Installing Python dependencies...'
                 dir("${SERVICE_NAME}") {
                     sh '''
+                        # Ensure pip is available in PATH
+                        export PATH=/usr/local/bin:$HOME/.local/bin:$PATH
+
+                        # Verify Python and pip
                         python3 --version
                         pip3 --version || { echo "pip3 not found, aborting"; exit 1; }
-                        pip3 install --upgrade pip --user
+
+                        # Upgrade pip for the user and install dependencies
+                        python3 -m pip install --upgrade pip --user
                         pip3 install -r requirements.txt --user
                     '''
                 }
@@ -66,11 +72,13 @@ pipeline {
                                 --instance-ids \$APP1_ID \
                                 --document-name "AWS-RunShellScript" \
                                 --parameters 'commands=[
+                                    "export PATH=/usr/local/bin:\$HOME/.local/bin:\$PATH",
                                     "cd /tmp",
                                     "aws s3 cp s3://richie-s3/deployments/${SERVICE_NAME}/${SERVICE_NAME}.tar.gz .",
                                     "cd ~/services/${SERVICE_NAME}",
                                     "tar -xzf /tmp/${SERVICE_NAME}.tar.gz",
-                                    "pip3 install -r requirements.txt --user",
+                                    "python3 -m pip install --upgrade pip --user",
+                                    "python3 -m pip install -r requirements.txt --user",
                                     "pm2 restart ${SERVICE_NAME} || pm2 start app.py --name ${SERVICE_NAME} --interpreter python3",
                                     "rm /tmp/${SERVICE_NAME}.tar.gz"
                                 ]' \
@@ -93,11 +101,13 @@ pipeline {
                                 --instance-ids \$APP2_ID \
                                 --document-name "AWS-RunShellScript" \
                                 --parameters 'commands=[
+                                    "export PATH=/usr/local/bin:\$HOME/.local/bin:\$PATH",
                                     "cd /tmp",
                                     "aws s3 cp s3://richie-s3/deployments/${SERVICE_NAME}/${SERVICE_NAME}.tar.gz .",
                                     "cd ~/services/${SERVICE_NAME}",
                                     "tar -xzf /tmp/${SERVICE_NAME}.tar.gz",
-                                    "pip3 install -r requirements.txt --user",
+                                    "python3 -m pip install --upgrade pip --user",
+                                    "python3 -m pip install -r requirements.txt --user",
                                     "pm2 restart ${SERVICE_NAME} || pm2 start app.py --name ${SERVICE_NAME} --interpreter python3",
                                     "rm /tmp/${SERVICE_NAME}.tar.gz"
                                 ]' \
@@ -110,14 +120,13 @@ pipeline {
 
         stage('Wait for Deployment') {
             steps {
-                echo "Waiting for services to come online..."
+                echo "Waiting for deployment to stabilize..."
                 sleep time: 30, unit: 'SECONDS'
             }
         }
 
         stage('Health Check') {
             steps {
-                echo "Running health checks..."
                 sh """
                     curl -f http://10.0.11.51:${SERVICE_PORT}/health || echo "Server 1 failed"
                     curl -f http://10.0.12.197:${SERVICE_PORT}/health || echo "Server 2 failed"
