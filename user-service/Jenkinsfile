@@ -49,19 +49,16 @@ pipeline {
                 echo "Packaging ${SERVICE_NAME} (stable build)..."
                 dir("${SERVICE_NAME}") {
                     sh '''
+                        set -e
                         rm -rf /tmp/package-${SERVICE_NAME}
                         mkdir -p /tmp/package-${SERVICE_NAME}
 
-                        rsync -a \
-                          --exclude=node_modules \
-                          --exclude=.git \
-                          --exclude=.npm \
-                          ./ /tmp/package-${SERVICE_NAME}/
+                        rsync -a --exclude=node_modules --exclude=.git --exclude=.npm ./ /tmp/package-${SERVICE_NAME}/
 
                         cd /tmp/package-${SERVICE_NAME}
 
-                        # Stable tar archive; ignore file changes during tar
-                        tar --warning=no-file-changed -czf ${SERVICE_NAME}.tar.gz .
+                        # Ignore "file changed as we read it" warning
+                        tar --warning=no-file-changed -czf ${SERVICE_NAME}.tar.gz . || true
 
                         mv ${SERVICE_NAME}.tar.gz ${WORKSPACE}/${SERVICE_NAME}/
                         rm -rf /tmp/package-${SERVICE_NAME}
@@ -73,11 +70,17 @@ pipeline {
         stage('Upload to S3') {
             steps {
                 echo 'Uploading package to S3...'
-                sh """
-                    aws s3 cp ${SERVICE_NAME}/${SERVICE_NAME}.tar.gz \
-                        s3://richie-s3/deployments/${SERVICE_NAME}/ \
-                        --region ${AWS_REGION}
-                """
+                script {
+                    // Ensure the tar.gz exists before upload
+                    sh "test -f ${SERVICE_NAME}/${SERVICE_NAME}.tar.gz"
+                    def status = sh(
+                        script: "aws s3 cp ${SERVICE_NAME}/${SERVICE_NAME}.tar.gz s3://richie-s3/deployments/${SERVICE_NAME}/ --region ${AWS_REGION}",
+                        returnStatus: true
+                    )
+                    if (status != 0) {
+                        error "S3 upload failed"
+                    }
+                }
             }
         }
 
@@ -145,14 +148,12 @@ pipeline {
 
         stage('Wait for Deployment') {
             steps {
-                echo 'Waiting for deployment to settle...'
                 sleep time: 30, unit: 'SECONDS'
             }
         }
 
         stage('Health Check') {
             steps {
-                echo 'Checking server health...'
                 sh """
                     curl -f http://10.0.11.51:${SERVICE_PORT}/health || echo "Server 1 failed"
                     curl -f http://10.0.12.197:${SERVICE_PORT}/health || echo "Server 2 failed"
