@@ -1,6 +1,10 @@
 pipeline {
     agent any
 
+    triggers {
+        githubPush()  // Add this line
+    }
+
     environment {
         AWS_REGION = "eu-west-2"
         S3_BUCKET  = "ecommerce-deploy-artifacts"
