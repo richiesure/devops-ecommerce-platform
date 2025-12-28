@@ -7,8 +7,8 @@ pipeline {
         SERVICE_NAME = "order-service"
         PACKAGE_NAME = "order-service.tar.gz"
 
-        SERVER_1 = "i-xxxxxxxxxxxxxxx"
-        SERVER_2 = "i-yyyyyyyyyyyyyyy"
+        SERVER_1 = "i-079a771a6d2b175ad"
+        SERVER_2 = "i-0a0da137f42de6f39"
     }
 
     stages {
@@ -26,6 +26,10 @@ pipeline {
                 dir('order-service') {
                     sh '''
                         python3 --version
+                        
+                        # Install PostgreSQL development libraries
+                        apt-get update && apt-get install -y libpq-dev gcc || yum install -y postgresql-devel gcc || true
+                        
                         python3 -m venv venv
                         . venv/bin/activate
 
@@ -71,12 +75,15 @@ pipeline {
                           --instance-ids ${SERVER_1} \
                           --document-name "AWS-RunShellScript" \
                           --parameters commands='[
+                            "sudo yum install -y postgresql-devel gcc python3-devel || sudo apt-get install -y libpq-dev gcc python3-dev",
                             "cd /opt/${SERVICE_NAME}",
                             "aws s3 cp s3://${S3_BUCKET}/${SERVICE_NAME}/${PACKAGE_NAME} .",
                             "tar -xzf ${PACKAGE_NAME}",
-                            "source venv/bin/activate || python3 -m venv venv",
+                            "python3 -m venv venv || source venv/bin/activate",
+                            "source venv/bin/activate",
+                            "pip install --upgrade pip",
                             "pip install -r requirements.txt",
-                            "systemctl restart ${SERVICE_NAME}"
+                            "sudo systemctl restart ${SERVICE_NAME}"
                           ]'
                         """
                     }
@@ -90,12 +97,15 @@ pipeline {
                           --instance-ids ${SERVER_2} \
                           --document-name "AWS-RunShellScript" \
                           --parameters commands='[
+                            "sudo yum install -y postgresql-devel gcc python3-devel || sudo apt-get install -y libpq-dev gcc python3-dev",
                             "cd /opt/${SERVICE_NAME}",
                             "aws s3 cp s3://${S3_BUCKET}/${SERVICE_NAME}/${PACKAGE_NAME} .",
                             "tar -xzf ${PACKAGE_NAME}",
-                            "source venv/bin/activate || python3 -m venv venv",
+                            "python3 -m venv venv || source venv/bin/activate",
+                            "source venv/bin/activate",
+                            "pip install --upgrade pip",
                             "pip install -r requirements.txt",
-                            "systemctl restart ${SERVICE_NAME}"
+                            "sudo systemctl restart ${SERVICE_NAME}"
                           ]'
                         """
                     }
