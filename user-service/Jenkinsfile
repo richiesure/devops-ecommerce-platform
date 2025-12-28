@@ -34,18 +34,29 @@ pipeline {
         }
 
         stage('Package') {
-            steps {
-                echo "Packaging ${SERVICE_NAME}..."
-                dir("${SERVICE_NAME}") {
-                    sh '''
-                      tar \
-                        --exclude=node_modules \
-                        --exclude=.git \
-                        -czf ${SERVICE_NAME}.tar.gz .
-                    '''
-                }
-            }
+    steps {
+        echo "Packaging ${SERVICE_NAME} (stable build)..."
+        dir("${SERVICE_NAME}") {
+            sh '''
+              rm -rf /tmp/package-${SERVICE_NAME}
+              mkdir -p /tmp/package-${SERVICE_NAME}
+
+              rsync -a \
+                --exclude=node_modules \
+                --exclude=.git \
+                --exclude=.npm \
+                ./ /tmp/package-${SERVICE_NAME}/
+
+              cd /tmp/package-${SERVICE_NAME}
+              tar -czf ${SERVICE_NAME}.tar.gz .
+
+              mv ${SERVICE_NAME}.tar.gz ${WORKSPACE}/${SERVICE_NAME}/
+              rm -rf /tmp/package-${SERVICE_NAME}
+            '''
         }
+    }
+}
+
 
         stage('Upload to S3') {
             steps {
