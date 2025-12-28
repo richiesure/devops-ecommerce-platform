@@ -21,16 +21,17 @@ pipeline {
                 echo 'Installing Python dependencies...'
                 dir("${SERVICE_NAME}") {
                     sh '''
-                        # Ensure pip is available in PATH
                         export PATH=/usr/local/bin:$HOME/.local/bin:$PATH
 
-                        # Verify Python and pip
+                        # Verify Python
                         python3 --version
-                        pip3 --version || { echo "pip3 not found, aborting"; exit 1; }
 
-                        # Upgrade pip for the user and install dependencies
+                        # Ensure pip is installed and upgraded
+                        python3 -m ensurepip || true
                         python3 -m pip install --upgrade pip --user
-                        pip3 install -r requirements.txt --user
+
+                        # Install project dependencies
+                        python3 -m pip install -r requirements.txt --user
                     '''
                 }
             }
@@ -77,6 +78,7 @@ pipeline {
                                     "aws s3 cp s3://richie-s3/deployments/${SERVICE_NAME}/${SERVICE_NAME}.tar.gz .",
                                     "cd ~/services/${SERVICE_NAME}",
                                     "tar -xzf /tmp/${SERVICE_NAME}.tar.gz",
+                                    "python3 -m ensurepip || true",
                                     "python3 -m pip install --upgrade pip --user",
                                     "python3 -m pip install -r requirements.txt --user",
                                     "pm2 restart ${SERVICE_NAME} || pm2 start app.py --name ${SERVICE_NAME} --interpreter python3",
@@ -106,6 +108,7 @@ pipeline {
                                     "aws s3 cp s3://richie-s3/deployments/${SERVICE_NAME}/${SERVICE_NAME}.tar.gz .",
                                     "cd ~/services/${SERVICE_NAME}",
                                     "tar -xzf /tmp/${SERVICE_NAME}.tar.gz",
+                                    "python3 -m ensurepip || true",
                                     "python3 -m pip install --upgrade pip --user",
                                     "python3 -m pip install -r requirements.txt --user",
                                     "pm2 restart ${SERVICE_NAME} || pm2 start app.py --name ${SERVICE_NAME} --interpreter python3",
