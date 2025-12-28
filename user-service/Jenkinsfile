@@ -1,50 +1,4 @@
-pipeline {
-    agent any
-
-    environment {
-        SERVICE_NAME = 'user-service'
-        SERVICE_PORT = '8080'
-        AWS_REGION = 'eu-west-2'
-    }
-
-    stages {
-        stage('Checkout') {
-            steps {
-                echo 'Checking out source code...'
-                checkout scm
-            }
-        }
-
-        stage('Install Dependencies') {
-            steps {
-                echo 'Installing dependencies...'
-                dir("${SERVICE_NAME}") {
-                    sh 'npm install --omit=dev'
-                }
-            }
-        }
-
-        stage('Security Scan') {
-            steps {
-                echo 'Running security audit...'
-                dir("${SERVICE_NAME}") {
-                    sh 'npm audit --audit-level=moderate || echo "Audit complete with warnings"'
-                }
-            }
-        }
-
-        stage('Verify Tools') {
-  steps {
-    sh '''
-      command -v rsync || { echo "rsync missing"; exit 1; }
-      command -v tar || { echo "tar missing"; exit 1; }
-      command -v npm || { echo "npm missing"; exit 1; }
-    '''
-  }
-}
-
-
-        stage('Package') {
+stage('Package') {
     steps {
         echo "Packaging ${SERVICE_NAME} (stable build)..."
         dir("${SERVICE_NAME}") {
@@ -59,115 +13,12 @@ pipeline {
                 ./ /tmp/package-${SERVICE_NAME}/
 
               cd /tmp/package-${SERVICE_NAME}
-              tar -czf ${SERVICE_NAME}.tar.gz .
+              # Use --warning=no-file-changed to prevent tar from failing
+              tar --warning=no-file-changed -czf ${SERVICE_NAME}.tar.gz .
 
               mv ${SERVICE_NAME}.tar.gz ${WORKSPACE}/${SERVICE_NAME}/
               rm -rf /tmp/package-${SERVICE_NAME}
             '''
-        }
-    }
-}
-
-
-        stage('Upload to S3') {
-            steps {
-                echo 'Uploading package to S3...'
-                sh """
-                    aws s3 cp ${SERVICE_NAME}/${SERVICE_NAME}.tar.gz \
-                        s3://richie-s3/deployments/${SERVICE_NAME}/ \
-                        --region ${AWS_REGION}
-                """
-            }
-        }
-
-        stage('Deploy via SSM') {
-            parallel {
-                stage('Deploy to Server 1') {
-                    steps {
-                        sh """
-                            APP1_ID=\$(aws ec2 describe-instances \
-                                --filters "Name=tag:Name,Values=devops-ecommerce-app-1" \
-                                         "Name=instance-state-name,Values=running" \
-                                --query 'Reservations[0].Instances[0].InstanceId' \
-                                --output text \
-                                --region ${AWS_REGION})
-
-                            aws ssm send-command \
-                                --instance-ids \$APP1_ID \
-                                --document-name "AWS-RunShellScript" \
-                                --parameters 'commands=[
-                                    "set -e",
-                                    "cd /tmp",
-                                    "aws s3 cp s3://richie-s3/deployments/${SERVICE_NAME}/${SERVICE_NAME}.tar.gz .",
-                                    "mkdir -p ~/services/${SERVICE_NAME}",
-                                    "cd ~/services/${SERVICE_NAME}",
-                                    "tar -xzf /tmp/${SERVICE_NAME}.tar.gz",
-                                    "npm install --omit=dev",
-                                    "pm2 restart ${SERVICE_NAME} || pm2 start server.js --name ${SERVICE_NAME}",
-                                    "rm /tmp/${SERVICE_NAME}.tar.gz"
-                                ]' \
-                                --region ${AWS_REGION}
-                        """
-                    }
-                }
-
-                stage('Deploy to Server 2') {
-                    steps {
-                        sh """
-                            APP2_ID=\$(aws ec2 describe-instances \
-                                --filters "Name=tag:Name,Values=devops-ecommerce-app-2" \
-                                         "Name=instance-state-name,Values=running" \
-                                --query 'Reservations[0].Instances[0].InstanceId' \
-                                --output text \
-                                --region ${AWS_REGION})
-
-                            aws ssm send-command \
-                                --instance-ids \$APP2_ID \
-                                --document-name "AWS-RunShellScript" \
-                                --parameters 'commands=[
-                                    "set -e",
-                                    "cd /tmp",
-                                    "aws s3 cp s3://richie-s3/deployments/${SERVICE_NAME}/${SERVICE_NAME}.tar.gz .",
-                                    "mkdir -p ~/services/${SERVICE_NAME}",
-                                    "cd ~/services/${SERVICE_NAME}",
-                                    "tar -xzf /tmp/${SERVICE_NAME}.tar.gz",
-                                    "npm install --omit=dev",
-                                    "pm2 restart ${SERVICE_NAME} || pm2 start server.js --name ${SERVICE_NAME}",
-                                    "rm /tmp/${SERVICE_NAME}.tar.gz"
-                                ]' \
-                                --region ${AWS_REGION}
-                        """
-                    }
-                }
-            }
-        }
-
-        stage('Wait for Deployment') {
-            steps {
-                sleep time: 30, unit: 'SECONDS'
-            }
-        }
-
-        stage('Health Check') {
-            steps {
-                sh """
-                    curl -f http://10.0.11.51:${SERVICE_PORT}/health || echo "Server 1 failed"
-                    curl -f http://10.0.12.197:${SERVICE_PORT}/health || echo "Server 2 failed"
-                """
-            }
-        }
-    }
-
-    post {
-        always {
-            deleteDir()
-            echo "Pipeline completed"
-        }
-        success {
-            echo "User service deployed successfully"
-        }
-        failure {
-            echo "User service deployment failed"
         }
     }
 }
