@@ -5,10 +5,12 @@ pipeline {
         SERVICE_NAME = 'order-service'
         SERVICE_PORT = '5000'
         AWS_REGION = 'eu-west-2'
+        DEPLOY_DIR = '/home/ec2-user/services/order-service'
         PATH = "/usr/local/bin:$HOME/.local/bin:${env.PATH}"
     }
 
     stages {
+
         stage('Checkout') {
             steps {
                 echo 'Checking out source code...'
@@ -16,41 +18,26 @@ pipeline {
             }
         }
 
-        stage('Install Dependencies') {
-    steps {
-        echo 'Installing Python dependencies in a virtual environment...'
-        dir("${SERVICE_NAME}") {
-            sh '''
-                export PATH=/usr/local/bin:$HOME/.local/bin:$PATH
+        stage('Install Dependencies (Jenkins)') {
+            steps {
+                echo 'Installing Python dependencies in Jenkins container...'
+                dir("${SERVICE_NAME}") {
+                    sh '''
+                        python3 --version
+                        pip3 --version
 
-                # Ensure venv is available
-                apt-get update && apt-get install -y python3-venv
-
-                # Create a virtual environment
-                python3 -m venv venv
-
-                # Activate venv using sh-compatible syntax
-                . venv/bin/activate
-
-                # Upgrade pip inside the virtual environment
-                pip install --upgrade pip
-
-                # Install project dependencies
-                pip install -r requirements.txt
-
-                echo "Python dependencies installed successfully in venv."
-            '''
+                        python3 -m pip install --upgrade pip --user
+                        pip3 install -r requirements.txt --user
+                    '''
+                }
+            }
         }
-    }
-}
-
-
 
         stage('Package') {
             steps {
                 echo "Packaging ${SERVICE_NAME}..."
                 dir("${SERVICE_NAME}") {
-                    sh "tar -czf ${SERVICE_NAME}.tar.gz ."
+                    sh "tar -czf ${SERVICE_NAME}.tar.gz app.py requirements.txt"
                 }
             }
         }
@@ -60,40 +47,40 @@ pipeline {
                 echo 'Uploading package to S3...'
                 sh """
                     aws s3 cp ${SERVICE_NAME}/${SERVICE_NAME}.tar.gz \
-                        s3://richie-s3/deployments/${SERVICE_NAME}/ \
-                        --region ${AWS_REGION}
+                      s3://richie-s3/deployments/${SERVICE_NAME}/ \
+                      --region ${AWS_REGION}
                 """
             }
         }
 
         stage('Deploy via SSM') {
             parallel {
+
                 stage('Deploy to Server 1') {
                     steps {
                         sh """
-                            APP1_ID=\$(aws ec2 describe-instances \
-                                --filters "Name=tag:Name,Values=devops-ecommerce-app-1" \
-                                         "Name=instance-state-name,Values=running" \
-                                --query 'Reservations[0].Instances[0].InstanceId' \
-                                --output text \
-                                --region ${AWS_REGION})
+                        APP1_ID=\$(aws ec2 describe-instances \
+                          --filters "Name=tag:Name,Values=devops-ecommerce-app-1" \
+                                   "Name=instance-state-name,Values=running" \
+                          --query 'Reservations[0].Instances[0].InstanceId' \
+                          --output text \
+                          --region ${AWS_REGION})
 
-                            aws ssm send-command \
-                                --instance-ids \$APP1_ID \
-                                --document-name "AWS-RunShellScript" \
-                                --parameters 'commands=[
-                                    "export PATH=/usr/local/bin:\$HOME/.local/bin:\$PATH",
-                                    "cd /tmp",
-                                    "aws s3 cp s3://richie-s3/deployments/${SERVICE_NAME}/${SERVICE_NAME}.tar.gz .",
-                                    "cd ~/services/${SERVICE_NAME}",
-                                    "tar -xzf /tmp/${SERVICE_NAME}.tar.gz",
-                                    "python3 -m ensurepip || true",
-                                    "python3 -m pip install --upgrade pip --user",
-                                    "python3 -m pip install -r requirements.txt --user",
-                                    "pm2 restart ${SERVICE_NAME} || pm2 start app.py --name ${SERVICE_NAME} --interpreter python3",
-                                    "rm /tmp/${SERVICE_NAME}.tar.gz"
-                                ]' \
-                                --region ${AWS_REGION}
+                        aws ssm send-command \
+                          --instance-ids \$APP1_ID \
+                          --document-name AWS-RunShellScript \
+                          --parameters commands="
+                            mkdir -p ${DEPLOY_DIR}
+                            cd ${DEPLOY_DIR}
+                            aws s3 cp s3://richie-s3/deployments/${SERVICE_NAME}/${SERVICE_NAME}.tar.gz .
+                            tar -xzf ${SERVICE_NAME}.tar.gz
+                            python3 -m venv venv || true
+                            . venv/bin/activate
+                            pip install --upgrade pip
+                            pip install -r requirements.txt
+                            pm2 restart ${SERVICE_NAME} || pm2 start app.py --name ${SERVICE_NAME} --interpreter python3
+                          " \
+                          --region ${AWS_REGION}
                         """
                     }
                 }
@@ -101,29 +88,28 @@ pipeline {
                 stage('Deploy to Server 2') {
                     steps {
                         sh """
-                            APP2_ID=\$(aws ec2 describe-instances \
-                                --filters "Name=tag:Name,Values=devops-ecommerce-app-2" \
-                                         "Name=instance-state-name,Values=running" \
-                                --query 'Reservations[0].Instances[0].InstanceId' \
-                                --output text \
-                                --region ${AWS_REGION})
+                        APP2_ID=\$(aws ec2 describe-instances \
+                          --filters "Name=tag:Name,Values=devops-ecommerce-app-2" \
+                                   "Name=instance-state-name,Values=running" \
+                          --query 'Reservations[0].Instances[0].InstanceId' \
+                          --output text \
+                          --region ${AWS_REGION})
 
-                            aws ssm send-command \
-                                --instance-ids \$APP2_ID \
-                                --document-name "AWS-RunShellScript" \
-                                --parameters 'commands=[
-                                    "export PATH=/usr/local/bin:\$HOME/.local/bin:\$PATH",
-                                    "cd /tmp",
-                                    "aws s3 cp s3://richie-s3/deployments/${SERVICE_NAME}/${SERVICE_NAME}.tar.gz .",
-                                    "cd ~/services/${SERVICE_NAME}",
-                                    "tar -xzf /tmp/${SERVICE_NAME}.tar.gz",
-                                    "python3 -m ensurepip || true",
-                                    "python3 -m pip install --upgrade pip --user",
-                                    "python3 -m pip install -r requirements.txt --user",
-                                    "pm2 restart ${SERVICE_NAME} || pm2 start app.py --name ${SERVICE_NAME} --interpreter python3",
-                                    "rm /tmp/${SERVICE_NAME}.tar.gz"
-                                ]' \
-                                --region ${AWS_REGION}
+                        aws ssm send-command \
+                          --instance-ids \$APP2_ID \
+                          --document-name AWS-RunShellScript \
+                          --parameters commands="
+                            mkdir -p ${DEPLOY_DIR}
+                            cd ${DEPLOY_DIR}
+                            aws s3 cp s3://richie-s3/deployments/${SERVICE_NAME}/${SERVICE_NAME}.tar.gz .
+                            tar -xzf ${SERVICE_NAME}.tar.gz
+                            python3 -m venv venv || true
+                            . venv/bin/activate
+                            pip install --upgrade pip
+                            pip install -r requirements.txt
+                            pm2 restart ${SERVICE_NAME} || pm2 start app.py --name ${SERVICE_NAME} --interpreter python3
+                          " \
+                          --region ${AWS_REGION}
                         """
                     }
                 }
@@ -132,7 +118,7 @@ pipeline {
 
         stage('Wait for Deployment') {
             steps {
-                echo "Waiting for deployment to stabilize..."
+                echo "Waiting for service to stabilise..."
                 sleep time: 30, unit: 'SECONDS'
             }
         }
@@ -140,8 +126,8 @@ pipeline {
         stage('Health Check') {
             steps {
                 sh """
-                    curl -f http://10.0.11.51:${SERVICE_PORT}/health || echo "Server 1 failed"
-                    curl -f http://10.0.12.197:${SERVICE_PORT}/health || echo "Server 2 failed"
+                  curl -f http://10.0.11.51:${SERVICE_PORT}/health
+                  curl -f http://10.0.12.197:${SERVICE_PORT}/health
                 """
             }
         }
