@@ -1,6 +1,10 @@
 pipeline {
     agent any
 
+    triggers {
+        githubPush()  // Add this line
+    }
+
     environment {
         SERVICE_NAME = 'product-service'
         SERVICE_PORT = '3000'
