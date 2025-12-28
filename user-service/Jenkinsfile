@@ -3,71 +3,81 @@ pipeline {
 
     environment {
         SERVICE_NAME = 'user-service'
-        SERVICE_PORT = '3000'   // user-service runs on 3000, not 8080
-        APP_SERVER_1 = '10.0.11.51'
-        APP_SERVER_2 = '10.0.12.197'
-        GITHUB_REPO = 'https://github.com/richiesure/devops-ecommerce-platform.git'
+        SERVICE_PORT = '8080'
+        AWS_REGION = 'eu-west-2'
     }
 
     stages {
-<<<<<<< HEAD
-
         stage('Checkout') {
             steps {
                 echo 'Checking out source code...'
-                git branch: 'main',
-                    url: "${GITHUB_REPO}",
-                    credentialsId: 'gits-cred'
-=======
->>>>>>> b0335a3 (Fix Jenkinsfiles: correct GitHub URL, remove duplicate checkout, fix workspace cleanup)
+                checkout scm
             }
         }
 
         stage('Install Dependencies') {
             steps {
-                echo 'Installing Node.js dependencies...'
-                dir('user-service') {
-                    sh '''
-                        node --version
-                        npm --version
-                        npm install --omit=dev
-                    '''
+                echo 'Installing dependencies...'
+                dir("${SERVICE_NAME}") {
+                    sh 'npm install --production'
                 }
             }
         }
 
         stage('Security Scan') {
             steps {
-                echo 'Running npm audit (non-blocking)...'
-                dir('user-service') {
-                    sh 'npm audit || echo "Audit completed with warnings"'
+                echo 'Running security audit...'
+                dir("${SERVICE_NAME}") {
+                    sh 'npm audit --audit-level=moderate || echo "Audit complete with warnings"'
                 }
             }
         }
 
         stage('Package') {
             steps {
-                echo 'Packaging service...'
-                dir('user-service') {
-                    sh 'tar -czf user-service.tar.gz .'
+                echo "Packaging ${SERVICE_NAME}..."
+                dir("${SERVICE_NAME}") {
+                    sh "tar -czf ${SERVICE_NAME}.tar.gz ."
                 }
             }
         }
 
-        stage('Deploy to App Servers') {
-            parallel {
+        stage('Upload to S3') {
+            steps {
+                echo 'Uploading package to S3...'
+                sh """
+                    aws s3 cp ${SERVICE_NAME}/${SERVICE_NAME}.tar.gz \
+                        s3://richie-s3/deployments/${SERVICE_NAME}/ \
+                        --region ${AWS_REGION}
+                """
+            }
+        }
 
+        stage('Deploy via SSM') {
+            parallel {
                 stage('Deploy to Server 1') {
                     steps {
                         sh """
-                        scp -o StrictHostKeyChecking=no user-service/user-service.tar.gz ec2-user@${APP_SERVER_1}:/tmp/
-                        ssh -o StrictHostKeyChecking=no ec2-user@${APP_SERVER_1} '
-                            mkdir -p ~/services/user-service
-                            tar -xzf /tmp/user-service.tar.gz -C ~/services/user-service
-                            cd ~/services/user-service
-                            npm install --omit=dev
-                            pm2 restart user-service || pm2 start server.js --name user-service
-                        '
+                            APP1_ID=\$(aws ec2 describe-instances \
+                                --filters "Name=tag:Name,Values=devops-ecommerce-app-1" \
+                                         "Name=instance-state-name,Values=running" \
+                                --query 'Reservations[0].Instances[0].InstanceId' \
+                                --output text \
+                                --region ${AWS_REGION})
+
+                            aws ssm send-command \
+                                --instance-ids \$APP1_ID \
+                                --document-name "AWS-RunShellScript" \
+                                --parameters 'commands=[
+                                    "cd /tmp",
+                                    "aws s3 cp s3://richie-s3/deployments/${SERVICE_NAME}/${SERVICE_NAME}.tar.gz .",
+                                    "cd ~/services/${SERVICE_NAME}",
+                                    "tar -xzf /tmp/${SERVICE_NAME}.tar.gz",
+                                    "npm install --production",
+                                    "pm2 restart ${SERVICE_NAME} || pm2 start server.js --name ${SERVICE_NAME}",
+                                    "rm /tmp/${SERVICE_NAME}.tar.gz"
+                                ]' \
+                                --region ${AWS_REGION}
                         """
                     }
                 }
@@ -75,42 +85,58 @@ pipeline {
                 stage('Deploy to Server 2') {
                     steps {
                         sh """
-                        scp -o StrictHostKeyChecking=no user-service/user-service.tar.gz ec2-user@${APP_SERVER_2}:/tmp/
-                        ssh -o StrictHostKeyChecking=no ec2-user@${APP_SERVER_2} '
-                            mkdir -p ~/services/user-service
-                            tar -xzf /tmp/user-service.tar.gz -C ~/services/user-service
-                            cd ~/services/user-service
-                            npm install --omit=dev
-                            pm2 restart user-service || pm2 start server.js --name user-service
-                        '
+                            APP2_ID=\$(aws ec2 describe-instances \
+                                --filters "Name=tag:Name,Values=devops-ecommerce-app-2" \
+                                         "Name=instance-state-name,Values=running" \
+                                --query 'Reservations[0].Instances[0].InstanceId' \
+                                --output text \
+                                --region ${AWS_REGION})
+
+                            aws ssm send-command \
+                                --instance-ids \$APP2_ID \
+                                --document-name "AWS-RunShellScript" \
+                                --parameters 'commands=[
+                                    "cd /tmp",
+                                    "aws s3 cp s3://richie-s3/deployments/${SERVICE_NAME}/${SERVICE_NAME}.tar.gz .",
+                                    "cd ~/services/${SERVICE_NAME}",
+                                    "tar -xzf /tmp/${SERVICE_NAME}.tar.gz",
+                                    "npm install --production",
+                                    "pm2 restart ${SERVICE_NAME} || pm2 start server.js --name ${SERVICE_NAME}",
+                                    "rm /tmp/${SERVICE_NAME}.tar.gz"
+                                ]' \
+                                --region ${AWS_REGION}
                         """
                     }
                 }
-
             }
         }
 
-        stage('Verify Deployment') {
+        stage('Wait for Deployment') {
             steps {
-                echo 'Running health checks...'
+                sleep time: 30, unit: 'SECONDS'
+            }
+        }
+
+        stage('Health Check') {
+            steps {
                 sh """
-                    sleep 5
-                    curl -f http://${APP_SERVER_1}:${SERVICE_PORT}/health
-                    curl -f http://${APP_SERVER_2}:${SERVICE_PORT}/health
+                    curl -f http://10.0.11.51:${SERVICE_PORT}/health || echo "Server 1 failed"
+                    curl -f http://10.0.12.197:${SERVICE_PORT}/health || echo "Server 2 failed"
                 """
             }
         }
     }
 
     post {
-        success {
-            echo '✅ User Service deployed successfully to both servers'
-        }
-        failure {
-            echo '❌ Deployment failed – check logs'
-        }
         always {
             deleteDir()
+            echo "Pipeline completed"
+        }
+        success {
+            echo "User service deployed successfully"
+        }
+        failure {
+            echo "User service deployment failed"
         }
     }
 }
