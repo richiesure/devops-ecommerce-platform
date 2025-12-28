@@ -33,6 +33,17 @@ pipeline {
             }
         }
 
+        stage('Verify Tools') {
+  steps {
+    sh '''
+      command -v rsync || { echo "rsync missing"; exit 1; }
+      command -v tar || { echo "tar missing"; exit 1; }
+      command -v npm || { echo "npm missing"; exit 1; }
+    '''
+  }
+}
+
+
         stage('Package') {
     steps {
         echo "Packaging ${SERVICE_NAME} (stable build)..."
